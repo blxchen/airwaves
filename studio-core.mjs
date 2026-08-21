@@ -79,7 +79,7 @@ export function createMeasure(family = "guitar", options = {}) {
     alternateEndings: [], pickup: false, feel: "off",
     voices: VOICES.map((index) => ({
       index,
-      beats: index === 1 ? Array.from({ length: beatCount }, (_, beatIndex) => createBeat(family, { duration: denominator, index: beatIndex })) : [],
+      beats: index === 1 ? Array.from({ length: beatCount }, (_, beatIndex) => createBeat(family, { duration: denominator, index: beatIndex, rest: options.rest !== false })) : [],
     })),
   };
   return reflowMeasure(measure);
