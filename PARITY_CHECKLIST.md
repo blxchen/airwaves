@@ -21,7 +21,7 @@ Confirmed current Songsterr Plus-gated features (all to be implemented here as f
 | Structure | Per-track bar insert/delete | Aligned cross-track bars, repeats/endings, tempo/signature, pickup and feel | partial |
 | Tracks | Add, rename, delete | Duplicate/reorder, instrument metadata, tuning/capo, mixer and visibility | partial |
 | Renderer | Semantic edit grid + alphaTab preview | Shared model for Tab/Sheet, selection/cursor/loop overlays, multi-track view | partial |
-| Playback/practice | Synth playback, loop toggle, speed, metronome, per-track mute/solo/volume mixer | Selection playback, loop range, count-in policy, mixer, transpose/pitch state | partial |
+| Playback/practice | Synth playback, speed, metronome, per-track mute/solo/volume mixer, bar-range loop, playback pitch shift | Selection playback, count-in policy, transpose/pitch state, track autoswitch | partial |
 | Persistence | Local IndexedDB autosave | Versioned drafts, recovery, selection/preferences, conflict guard | partial |
 | Import/export | alphaTab import and GP/AlphaTex/JSON/print | Previewed import, warnings, clean round-trip paths and progress states | partial |
 | Revisions | Rebuilt from scratch | Named local snapshots and restore | partial |
@@ -73,7 +73,8 @@ Confirmed current Songsterr Plus-gated features (all to be implemented here as f
 - Loop range and keyboard boundary movement — `not started`
 - Solo/mute/track volume mixer — `verified` (per-track M/S buttons in the track rail and inspector, wired live to the alphaTab synth via `changeTrackMute`/`changeTrackSolo`/`changeTrackVolume`, persisted with the project and undoable); master mixer view/pan — `not started`
 - Count-in and metronome volume — `partial`
-- Audio pitch shift and notation transpose — `not started`
+- Loop range — `verified` (LOOP ◀/▶ set start/end to the selected bar, LOOP × clears back to full-song, range highlighted in the score map, applied to the alphaTab synth via `playbackRange` and reapplied on every score reload; session-only like Songsterr's own loop, not saved with the project)
+- Audio pitch shift — `verified` (±12 semitone transport control; transposes track tuning/MIDI pitch in a preview-only clone of the arrangement so the synth sounds shifted — e.g. for alternate tunings — while the saved tab and displayed notation are untouched); notation transpose (permanently changing the authored notes) remains `partial`, covered by existing pitch/string movement commands
 - Track autoswitch and multi-display — `not started`
 - MIDI/GP/synth audio/print exports — `partial`
 

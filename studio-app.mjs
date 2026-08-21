@@ -2,7 +2,7 @@ import {
   clone, CommandHistory, createArrangement, createBeat, createMeasure, createNote, createTrack,
   deleteAlignedMeasure, duplicateAlignedMeasure, fitVoiceToMeasure, getBeat, getMeasure, getNotes,
   getTrack, getVoice, insertAlignedMeasure, midiName, normalizeArrangement, normalizeSelection,
-  reflowMeasure, reflowVoice, toAlphaTex, validateArrangement, validateMeasure,
+  PPQ, reflowMeasure, reflowVoice, toAlphaTex, validateArrangement, validateMeasure,
 } from "./studio-core.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -11,10 +11,11 @@ const STORAGE = "airwaves-studio-v4";
 const PREFS = "airwaves-studio-prefs-v4";
 const EFFECTS = ["ghost", "accent", "heavyAccent", "staccato", "letRing", "palmMute", "dead", "naturalHarmonic", "artificialHarmonic", "hammerPull", "legatoSlide", "shiftSlide", "slideInBelow", "slideInAbove", "slideOutDown", "slideOutUp", "bend", "trill", "tapping", "slapping", "popping", "pickScrapeDown", "pickScrapeUp", "vibrato", "wideVibrato", "tremoloVibrato", "wideTremoloVibrato", "golpeFinger", "golpeThumb", "wahOpen", "wahClosed"];
 const BEAT_EFFECTS = ["hairpin", "brush", "arpeggio", "pickStroke", "grace", "tremoloPicking", "sustainPedal"];
+const NOTE_INDEX = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };
 const state = {
   arrangement: createArrangement(), selection: null, history: new CommandHistory(), clipboard: null,
   display: "tab", inspector: "selection", drafts: [], snapshots: [], alpha: null, preview: false,
-  renderTimer: 0, fretBuffer: "", fretTimer: 0,
+  renderTimer: 0, fretBuffer: "", fretTimer: 0, pitchShift: 0, loop: { startMeasure: null, endMeasure: null },
 };
 
 function esc(value) { return String(value ?? "").replace(/[&<>'"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c])); }
@@ -61,7 +62,7 @@ function render(full = true) {
   state.selection = normalizeSelection(state.arrangement, state.selection || { trackId: state.arrangement.tracks[0]?.id });
   if (full) { renderFields(); renderLibrary(); renderTracks(); renderMap(); renderScore(); }
   else { renderTracks(); renderMap(); renderScore(); }
-  renderInspector(); renderValidation(); renderButtons();
+  renderInspector(); renderValidation(); renderButtons(); renderLoopReadout();
 }
 
 function renderFields() {
@@ -81,10 +82,12 @@ function renderTracks() {
 
 function renderMap() {
   const track = activeTrack(); if (!track) return;
+  const bounds = loopBounds();
   $("#score-map-count").textContent = `${track.measures.length} BARS`;
   $("#score-map").innerHTML = track.measures.map((measure, index) => {
     const report = validateMeasure(measure).voices[state.selection.voice - 1];
-    return `<button type="button" class="${index === state.selection.measureIndex ? "active" : ""} ${report.status}" data-bar="${index}"><b>${index + 1}</b><span>${measure.timeSignature.numerator}/${measure.timeSignature.denominator}</span><i>${report.status}</i></button>`;
+    const inLoop = bounds && index >= bounds.start && index <= bounds.end;
+    return `<button type="button" class="${index === state.selection.measureIndex ? "active" : ""} ${report.status} ${inLoop ? "in-loop" : ""}" data-bar="${index}"><b>${index + 1}</b><span>${measure.timeSignature.numerator}/${measure.timeSignature.denominator}</span><i>${report.status}</i></button>`;
   }).join("");
 }
 
@@ -231,8 +234,8 @@ function saveProject(silent = false) {
   state.history.setBaseline(state.arrangement); renderLibrary(); renderButtons(); touchStatus("SAVED TO THIS BROWSER"); if (!silent) toast("TAB SAVED LOCALLY");
 }
 
-function loadProject(id) { const draft = state.drafts.find((item) => item.arrangement.id === id); if (!draft) return; state.arrangement = normalizeArrangement(draft.arrangement); state.selection = normalizeSelection(state.arrangement); state.history.clear(state.arrangement); render(); schedulePreview(); toast("LOCAL TAB OPENED"); }
-function newProject(form) { const data = new FormData(form); state.arrangement = createArrangement({ title: data.get("title"), artist: data.get("artist"), name: data.get("trackName"), family: data.get("family"), measureCount: Number(data.get("measureCount")), numerator: Number(data.get("numerator")), denominator: Number(data.get("denominator")), tempo: Number(data.get("tempo")) }); state.selection = normalizeSelection(state.arrangement); state.history.clear(); render(); schedulePreview(); toast("NEW TAB READY"); }
+function loadProject(id) { const draft = state.drafts.find((item) => item.arrangement.id === id); if (!draft) return; state.arrangement = normalizeArrangement(draft.arrangement); state.selection = normalizeSelection(state.arrangement); state.history.clear(state.arrangement); state.loop = { startMeasure: null, endMeasure: null }; render(); schedulePreview(); toast("LOCAL TAB OPENED"); }
+function newProject(form) { const data = new FormData(form); state.arrangement = createArrangement({ title: data.get("title"), artist: data.get("artist"), name: data.get("trackName"), family: data.get("family"), measureCount: Number(data.get("measureCount")), numerator: Number(data.get("numerator")), denominator: Number(data.get("denominator")), tempo: Number(data.get("tempo")) }); state.selection = normalizeSelection(state.arrangement); state.history.clear(); state.loop = { startMeasure: null, endMeasure: null }; render(); schedulePreview(); toast("NEW TAB READY"); }
 
 function addTrack(form) { const data = new FormData(form); run("add-track", "Add track", (arr, sel) => { const measureCount = arr.tracks[0].measures.length; const source = arr.tracks[0].measures[0]; const track = createTrack({ name: data.get("trackName"), family: data.get("family"), measureCount, numerator: source.timeSignature.numerator, denominator: source.timeSignature.denominator }); arr.tracks.push(track); sel.trackId = track.id; sel.measureIndex = 0; sel.beatIndex = 0; }); }
 function toggleTrackMix(trackId, prop) { run(`track-${prop}`, `Toggle ${prop}`, (arr) => { const track = arr.tracks.find((item) => item.id === trackId); if (track) track[prop] = !track[prop]; }); }
@@ -290,7 +293,7 @@ function ensureAlpha() {
     state.alpha = new window.alphaTab.AlphaTabApi($("#alpha-tab"), { core: { tex: true }, display: { scale: Number($("#score-zoom").value) / 100 }, player: { enablePlayer: true, soundFont: "https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.8.4/dist/soundfont/sonivox.sf2" } });
     state.alpha.playerPositionChanged?.on((event) => { $("#player-position").textContent = formatTime(event.currentTime); $("#player-duration").textContent = formatTime(event.endTime); });
     state.alpha.playerStateChanged?.on((event) => { $("#play-toggle").textContent = event.state === 1 ? "Ⅱ" : "▶"; });
-    state.alpha.scoreLoaded?.on(() => applyMixToAlpha());
+    state.alpha.scoreLoaded?.on(() => { applyMixToAlpha(); applyLoopRangeToAlpha(); });
   } catch (error) { toast(`PREVIEW UNAVAILABLE: ${error.message}`, true); }
   return state.alpha;
 }
@@ -305,10 +308,42 @@ function applyMixToAlpha() {
     } catch { /* preview engine does not support live mixer updates */ }
   });
 }
-function schedulePreview() { if (!state.preview) return; clearTimeout(state.renderTimer); state.renderTimer = setTimeout(() => { const api = ensureAlpha(); if (!api) return; try { api.tex(toAlphaTex(state.arrangement)); } catch { toast("ENGRAVED PREVIEW COULD NOT RENDER THIS EFFECT COMBINATION", true); } }, 180); }
+
+function measureTicks(measure) { return Math.round((measure.timeSignature.numerator * 4 / measure.timeSignature.denominator) * PPQ); }
+function measureStartTick(track, measureIndex) { let tick = 0; for (let i = 0; i < measureIndex; i++) tick += measureTicks(track.measures[i]); return tick; }
+function loopBounds() {
+  const { startMeasure, endMeasure } = state.loop; if (startMeasure == null || endMeasure == null) return null;
+  return { start: Math.min(startMeasure, endMeasure), end: Math.max(startMeasure, endMeasure) };
+}
+function applyLoopRangeToAlpha() {
+  if (!state.alpha) return;
+  const track = activeTrack(); const bounds = track && loopBounds();
+  const clamped = bounds && track.measures.length ? { start: Math.min(bounds.start, track.measures.length - 1), end: Math.min(bounds.end, track.measures.length - 1) } : null;
+  try { state.alpha.playbackRange = clamped ? { startTick: measureStartTick(track, clamped.start), endTick: measureStartTick(track, clamped.end) + measureTicks(track.measures[clamped.end]) } : null; }
+  catch { /* preview engine does not support loop ranges */ }
+}
+function renderLoopReadout() { const bounds = loopBounds(); $("#loop-readout").textContent = bounds ? `BAR ${bounds.start + 1}–${bounds.end + 1}` : "FULL SONG"; }
+function setLoopBoundary(edge) {
+  state.loop[edge] = state.selection.measureIndex;
+  if (state.loop.startMeasure == null) state.loop.startMeasure = state.selection.measureIndex;
+  if (state.loop.endMeasure == null) state.loop.endMeasure = state.selection.measureIndex;
+  renderLoopReadout(); renderMap(); applyLoopRangeToAlpha();
+}
+
+function noteNameToMidi(name) { const match = /^([A-G]#?)(-?\d+)$/.exec(String(name).trim()); return match ? (Number(match[2]) + 1) * 12 + NOTE_INDEX[match[1]] : 60; }
+function transposeArrangement(arrangement, semitones) {
+  if (!semitones) return arrangement;
+  const shifted = clone(arrangement);
+  shifted.tracks.forEach((track) => {
+    if (["guitar", "bass"].includes(track.family)) track.tuning = track.tuning.map((name) => midiName(noteNameToMidi(name) + semitones));
+    else track.measures.forEach((measure) => measure.voices.forEach((voice) => voice.beats.forEach((beat) => beat.notes.forEach((note) => { if (Number.isFinite(note.midiPitch)) note.midiPitch = Math.max(0, Math.min(127, note.midiPitch + semitones)); }))));
+  });
+  return shifted;
+}
+function schedulePreview() { if (!state.preview) return; clearTimeout(state.renderTimer); state.renderTimer = setTimeout(() => { const api = ensureAlpha(); if (!api) return; try { api.tex(toAlphaTex(transposeArrangement(state.arrangement, state.pitchShift))); } catch { toast("ENGRAVED PREVIEW COULD NOT RENDER THIS EFFECT COMBINATION", true); } }, 180); }
 
 function showCommands(filter = "") {
-  const commands = [{ n: "Undo", k: "Ctrl Z", a: () => undo() }, { n: "Redo", k: "Ctrl Shift Z", a: () => redo() }, { n: "Insert beat after", k: "", a: () => command("beat-after") }, { n: "Delete beat", k: "Backspace", a: () => command("delete-beat") }, { n: "Toggle rest", k: "R", a: () => command("rest") }, { n: "Add chord note", k: "", a: () => command("add-note") }, { n: "Duplicate bar", k: "", a: () => command("duplicate-bar") }, { n: "Fit bar with rests", k: "", a: repair }, { n: "Save locally", k: "Ctrl S", a: saveProject }, { n: "Toggle preview", k: "P", a: togglePreview }];
+  const commands = [{ n: "Undo", k: "Ctrl Z", a: () => undo() }, { n: "Redo", k: "Ctrl Shift Z", a: () => redo() }, { n: "Insert beat after", k: "", a: () => command("beat-after") }, { n: "Delete beat", k: "Backspace", a: () => command("delete-beat") }, { n: "Toggle rest", k: "R", a: () => command("rest") }, { n: "Add chord note", k: "", a: () => command("add-note") }, { n: "Duplicate bar", k: "", a: () => command("duplicate-bar") }, { n: "Fit bar with rests", k: "", a: repair }, { n: "Save locally", k: "Ctrl S", a: saveProject }, { n: "Toggle preview", k: "P", a: togglePreview }, { n: "Set loop start to selected bar", k: "", a: () => setLoopBoundary("startMeasure") }, { n: "Set loop end to selected bar", k: "", a: () => setLoopBoundary("endMeasure") }, { n: "Clear loop range", k: "", a: () => $("#loop-clear").click() }];
   state.commandItems = commands.filter((item) => item.n.toLowerCase().includes(filter.toLowerCase()));
   $("#command-list").innerHTML = state.commandItems.map((item, index) => `<button type="button" data-command-index="${index}"><span>${item.n}</span><kbd>${item.k}</kbd></button>`).join("");
 }
@@ -362,7 +397,7 @@ $("#export-menu-toggle").addEventListener("click", () => $(".s3-export").classLi
 $("#snapshot-project").addEventListener("click", () => { renderSnapshots(); $("#snapshot-dialog").showModal(); });
 $("#snapshot-form").addEventListener("submit", (event) => { if (event.submitter?.value !== "save") return; const label = new FormData(event.currentTarget).get("label"); state.snapshots.unshift({ id: `${Date.now()}`, projectId: state.arrangement.id, label, savedAt: new Date().toISOString(), arrangement: clone(state.arrangement) }); writeStore(); toast("SNAPSHOT SAVED"); });
 function renderSnapshots() { const items = state.snapshots.filter((item) => item.projectId === state.arrangement.id); $("#snapshot-list").innerHTML = items.length ? items.map((item) => `<button type="button" data-snapshot="${item.id}"><strong>${esc(item.label)}</strong><span>${formatDate(item.savedAt)}</span></button>`).join("") : "<p>NO SNAPSHOTS FOR THIS TAB.</p>"; }
-$("#snapshot-list").addEventListener("click", (event) => { const button = event.target.closest("[data-snapshot]"); if (!button) return; const item = state.snapshots.find((snapshot) => snapshot.id === button.dataset.snapshot); if (!item) return; state.arrangement = normalizeArrangement(item.arrangement); state.selection = normalizeSelection(state.arrangement); state.history.clear(); $("#snapshot-dialog").close(); render(); schedulePreview(); toast("SNAPSHOT RESTORED — SAVE TO KEEP IT"); });
+$("#snapshot-list").addEventListener("click", (event) => { const button = event.target.closest("[data-snapshot]"); if (!button) return; const item = state.snapshots.find((snapshot) => snapshot.id === button.dataset.snapshot); if (!item) return; state.arrangement = normalizeArrangement(item.arrangement); state.selection = normalizeSelection(state.arrangement); state.history.clear(); state.loop = { startMeasure: null, endMeasure: null }; $("#snapshot-dialog").close(); render(); schedulePreview(); toast("SNAPSHOT RESTORED — SAVE TO KEEP IT"); });
 $("#command-search").addEventListener("click", () => { showCommands(); $("#command-dialog").showModal(); $("#command-filter").focus(); }); $("#command-filter").addEventListener("input", (event) => showCommands(event.target.value));
 $("#undo-editor").addEventListener("click", undo); $("#redo-editor").addEventListener("click", redo); $("#repair-measure").addEventListener("click", repair); $("#toggle-preview").addEventListener("click", togglePreview);
 $("#export-atex").addEventListener("click", () => download(`${safeName()}.atex`, toAlphaTex(state.arrangement))); $("#export-json").addEventListener("click", () => download(`${safeName()}.airwaves.json`, JSON.stringify(state.arrangement, null, 2), "application/json")); $("#export-gp").addEventListener("click", exportGp); $("#export-pdf").addEventListener("click", () => state.alpha?.print ? state.alpha.print() : window.print());
@@ -371,6 +406,9 @@ $("#score-zoom").addEventListener("input", (event) => { $("#zoom-output").value 
 $("#playback-speed").addEventListener("input", (event) => { $("#speed-output").value = `${event.target.value}%`; if (ensureAlpha()) state.alpha.playbackSpeed = Number(event.target.value) / 100; }); $("#master-volume").addEventListener("input", (event) => { $("#volume-output").value = `${event.target.value}%`; if (ensureAlpha()) state.alpha.masterVolume = Number(event.target.value) / 100; });
 $("#play-toggle").addEventListener("click", () => { state.preview = true; $("#render-preview").hidden = false; schedulePreview(); setTimeout(() => state.alpha?.playPause(), 250); }); $("#stop-player").addEventListener("click", () => state.alpha?.stop()); $("#go-start").addEventListener("click", () => { if (state.alpha) state.alpha.tickPosition = 0; });
 [["#loop-toggle", "isLooping"], ["#metronome-toggle", "metronomeVolume"], ["#count-in-toggle", "countInVolume"]].forEach(([selector, property]) => $(selector).addEventListener("click", (event) => { const api = ensureAlpha(); const on = event.currentTarget.getAttribute("aria-pressed") !== "true"; event.currentTarget.setAttribute("aria-pressed", String(on)); if (api) api[property] = property === "isLooping" ? on : on ? 1 : 0; }));
+$("#loop-set-start").addEventListener("click", () => setLoopBoundary("startMeasure")); $("#loop-set-end").addEventListener("click", () => setLoopBoundary("endMeasure"));
+$("#loop-clear").addEventListener("click", () => { state.loop = { startMeasure: null, endMeasure: null }; renderLoopReadout(); renderMap(); applyLoopRangeToAlpha(); });
+$("#pitch-shift").addEventListener("input", (event) => { const value = Number(event.target.value); state.pitchShift = value; $("#pitch-output").textContent = `${value > 0 ? "+" : ""}${value} ST`; schedulePreview(); });
 
 document.addEventListener("keydown", (event) => {
   if (event.target.matches("input, textarea, select") || $("dialog[open]")) return;

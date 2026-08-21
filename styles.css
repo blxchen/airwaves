@@ -2219,6 +2219,7 @@ footer > :last-child {
 .s3-transport input[type="range"] { width: 80px; accent-color: var(--s3-acid); }
 .s3-transport output { width: 34px; color: var(--s3-paper); }
 .s3-transport > b { margin-left: auto; color: var(--s3-acid); font-size: 11px; }
+.s3-loop-readout { margin: 0 6px 0 2px; color: #82827b; font-size: 9px; font-weight: 800; letter-spacing: .06em; white-space: nowrap; }
 .s3-transport > span { color: #82827b; font-size: 10px; }
 .s3-workspace { display: grid; grid-template-columns: 238px minmax(620px, 1fr) 285px; min-height: 770px; }
 .s3-left, .s3-inspector { background: #11110f; }
@@ -2251,6 +2252,7 @@ footer > :last-child {
 .s3-map button { position: relative; display: grid; min-height: 43px; padding: 5px; border: 1px solid #3b3b36; background: #171715; color: #aaa99f; text-align: left; }
 .s3-map button.active { border-color: var(--s3-acid); color: var(--s3-acid); }
 .s3-map button.over { border-bottom-color: var(--s3-red); }
+.s3-map button.in-loop { box-shadow: inset 0 0 0 1px var(--s3-acid); }
 .s3-map b { font: 800 16px "Barlow Condensed", sans-serif; }.s3-map span,.s3-map i { font-size: 7px; }.s3-map i { position: absolute; right: 3px; bottom: 3px; font-style: normal; opacity: .5; }
 .s3-center { min-width: 0; background: #e9e5da; color: var(--s3-ink); }
 .s3-modebar { display: flex; align-items: center; flex-wrap: wrap; min-height: 46px; padding: 5px 10px; border-bottom: 1px solid #97968e; background: #d3cfc5; }
