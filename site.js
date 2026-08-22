@@ -19,10 +19,10 @@
   const escapeHTML = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
 
   function injectShell() {
-    let showIntro = true;
-    try { showIntro = localStorage.getItem(introKey) !== "yes"; } catch (_) { /* storage may be disabled */ }
+    let showIntro = currentPage === "home";
+    if (showIntro) { try { showIntro = localStorage.getItem(introKey) !== "yes"; } catch (_) { /* storage may be disabled */ } }
     document.body.insertAdjacentHTML("afterbegin", `
-      ${showIntro ? '<div class="page-loader" id="page-loader" aria-hidden="true"><div class="loader-logo">AIRWAVES</div><div class="loader-track"><span></span></div><div class="loader-count">TURN IT UP / 100%</div></div>' : ''}
+      ${showIntro ? '<div class="page-loader" id="page-loader" aria-hidden="true"><div class="loader-noise" aria-hidden="true"></div><div class="loader-logo"><span>AIR</span><span>WAVES</span></div><div class="loader-track"><span></span></div><div class="loader-count">TURN IT UP / <b id="loader-percent">0%</b></div></div>' : ''}
       <div class="custom-cursor" id="custom-cursor" aria-hidden="true"><span></span></div><div class="grain" aria-hidden="true"></div>`);
     if (!showIntro) document.body.classList.remove("is-loading");
 
@@ -236,6 +236,17 @@
 
   function startMotionSystem() {
     const loader = document.querySelector("#page-loader");
+    const LOADER_MS = 1300;
+    if (loader) {
+      const percent = loader.querySelector("#loader-percent");
+      const startedAt = performance.now();
+      const tickPercent = (now) => {
+        const value = Math.min(100, Math.round(((now - startedAt) / LOADER_MS) * 100));
+        if (percent) percent.textContent = `${value}%`;
+        if (value < 100) requestAnimationFrame(tickPercent);
+      };
+      requestAnimationFrame(tickPercent);
+    }
     setTimeout(() => {
       if (loader) {
         loader.classList.add("done");
@@ -249,7 +260,7 @@
         observer.unobserve(entry.target);
       }), { threshold: 0.1 });
       document.querySelectorAll(".reveal-item").forEach((item) => observer.observe(item));
-    }, loader ? 700 : 0);
+    }, loader ? LOADER_MS : 0);
 
     const hero = document.querySelector(".hero");
     if (hero) hero.addEventListener("pointermove", (event) => {

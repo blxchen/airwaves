@@ -60,15 +60,36 @@ body.is-loading {
   visibility: hidden;
 }
 
+.loader-noise {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  animation: loader-flash 900ms ease-out both;
+  pointer-events: none;
+}
+
 .loader-logo {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 0.12em;
   font-family: "Owned", Impact, sans-serif;
   font-size: clamp(4rem, 12vw, 9rem);
   line-height: 0.7;
   transform: rotate(-3deg);
+}
+
+.loader-logo span {
+  display: inline-block;
   animation: loader-hit 500ms cubic-bezier(.2,.9,.25,1) both;
 }
 
+.loader-logo span:nth-child(2) { animation-delay: 140ms; }
+
 .loader-track {
+  position: relative;
+  z-index: 1;
   width: min(420px, 72vw);
   height: 5px;
   background: rgba(13, 13, 11, 0.2);
@@ -81,10 +102,12 @@ body.is-loading {
   height: 100%;
   background: var(--ink);
   transform-origin: left;
-  animation: loader-progress 800ms cubic-bezier(.65,0,.35,1) both;
+  animation: loader-progress 1250ms cubic-bezier(.65,0,.35,1) both;
 }
 
 .loader-count {
+  position: relative;
+  z-index: 1;
   font-size: 0.6rem;
   font-weight: 900;
   letter-spacing: 0.18em;
@@ -92,13 +115,21 @@ body.is-loading {
 }
 
 @keyframes loader-hit {
-  from { opacity: 0; transform: translateY(70px) rotate(5deg) scale(.7); }
-  to { opacity: 1; transform: translateY(0) rotate(-3deg) scale(1); }
+  from { opacity: 0; transform: translateY(70px) scale(.7); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 @keyframes loader-progress {
   from { transform: scaleX(0); }
   to { transform: scaleX(1); }
+}
+
+@keyframes loader-flash {
+  0% { opacity: .9; }
+  12% { opacity: 0; }
+  24% { opacity: .5; }
+  40% { opacity: 0; }
+  100% { opacity: 0; }
 }
 
 .custom-cursor {
@@ -1890,6 +1921,7 @@ footer > :last-child {
 .backstage-masthead h1 em { color: var(--acid); font-style: normal; }
 .backstage-tools { padding: clamp(55px, 8vw, 110px) clamp(20px, 7vw, 110px); }
 .backstage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(22px, 4vw, 52px); perspective: 1200px; }
+.backstage-grid.single { grid-template-columns: minmax(0, 1fr); max-width: 480px; }
 .backstage-card { position: relative; display: grid; grid-template-rows: auto minmax(230px, 1fr) auto; min-height: 590px; color: var(--ink); border: 2px solid var(--ink); background: var(--paper-2); box-shadow: 11px 11px 0 var(--ink); text-decoration: none; overflow: hidden; transform: rotateX(var(--card-rx, 0deg)) rotateY(var(--card-ry, 0deg)); transition: transform 180ms ease, box-shadow 180ms ease; }
 .backstage-card:hover { z-index: 2; box-shadow: 16px 16px 0 var(--ink); }
 .backstage-card-index { padding: 13px 16px; border-bottom: 2px solid var(--ink); font-size: .56rem; font-weight: 900; letter-spacing: .14em; }

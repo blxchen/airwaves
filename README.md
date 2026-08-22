@@ -25,6 +25,8 @@ To add a card or member, duplicate an object in the relevant array and give it a
 
 Backstage access covers `backstage.html`, `next-set.html`, and `studio.html`, including direct visits to either tool. A successful login lasts for the current browser tab. **Lock Backstage Pass** in the main menu clears that session.
 
+Airwaves Studio is temporarily unlisted from the Backstage Pass launcher (`backstage.html`) during a rehaul — only the Next Set calculator is shown there. `studio.html`/`studio-app.mjs`/`studio-core.mjs`/`studio-synth.mjs` are untouched and still protected by the same login; only its launcher card was removed. Restore the `<a class="backstage-card ...">AIRWAVES STUDIO...</a>` block (and the `single` class on `.backstage-grid`) to bring it back.
+
 The password is processed with PBKDF2-SHA-256 in the browser. Only its derived verifier is stored in `site.js`; neither the plain password nor an entered password is written to browser storage. See `SECURITY.md` for the production security boundary.
 
 > GitHub Pages is static public hosting. This client-side gate discourages casual access but cannot provide true server-side security: repository files and downloaded assets remain public. Never store unreleased audio, personal data, API keys, or other secrets in this repository. For real access control, put the deployed site behind Cloudflare Access or move the protected area to a host with server-side authentication.
@@ -64,7 +66,7 @@ py -m http.server 4173
 
 Open `http://127.0.0.1:4173`. Opening the HTML files directly with `file://` can prevent IndexedDB, Web Crypto, playback workers, or external metadata requests from working correctly.
 
-The full-screen AIRWAVES intro is shown once per browser profile. To test it again, delete the `aw-intro-seen-v1` local-storage item in browser developer tools.
+The full-screen AIRWAVES intro plays only on the home page (`index.html`), and only the first time a given browser profile lands there — visiting other pages first doesn't consume it. To test it again, delete the `aw-intro-seen-v1` local-storage item in browser developer tools.
 
 ## Publish on GitHub Pages
 
