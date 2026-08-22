@@ -1,10 +1,10 @@
 # Airwaves Studio editor UI mapping
 
-The current Airwaves language uses an acid-green/black/paper palette, condensed display typography, ruled panels, compact uppercase labels, offset shadows, horizontal tool strips, right-side inspectors, modal dialogs, and bottom-sheet-like stacking at mobile breakpoints. The rebuild maps every editor group into those patterns and does not reproduce Songsterr styling.
+The current Airwaves language uses an acid-green/black/paper palette, condensed display typography, ruled panels, compact uppercase labels, offset shadows, horizontal tool strips, right-side inspectors, modal dialogs, and bottom-sheet-like stacking at mobile breakpoints. The rebuild maps every editor group into those patterns and does not reproduce Songsterr's colors, branding, or assets. It does now follow Songsterr's *architecture* directly: one continuous rendered tab surface doubles as the playback view (an integrated cursor highlights the playing beat in place), rather than a separate editor grid plus a hidden secondary preview/player.
 
 | Editor group | Existing UI component/pattern | Desktop placement | Mobile placement | Shortcut | Selection scope | Implemented | Verified |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Transport and audition | Compact ruled button strip | Sticky workspace header | Horizontally scrolling top strip | Space | Cursor/selection | Yes | No |
+| Transport and audition | Compact ruled button strip | Sticky workspace header | Horizontally scrolling top strip | Space | Cursor/selection | Yes | Yes — headless-browser test confirms real audio scheduling and advancing position |
 | Undo/redo | Document action buttons | Header actions | Sticky action strip | Ctrl/Cmd Z, Shift Z | Arrangement | Yes | Yes — source-fed model test |
 | Note/fret entry | Semantic score cells + status readout | Center score canvas | Full-width canvas | 0–9 | Cursor/note | Yes | No |
 | Duration and rhythm | Primary segmented toolbar | Above score | Horizontal tool tray | — | Beat/range | Yes | Yes — exact-tick model test |

@@ -8,6 +8,10 @@ This checklist tracks behavioral coverage from the reconstruction specification.
 
 Confirmed current Songsterr Plus-gated features (all to be implemented here as free, always-on): pause-free original-audio sync, playback speed control, high-contrast print, per-tab MIDI/Guitar Pro/MP3/WAV download, per-track solo/mute, loop, audio pitch shift (for alternate tunings, independent of notation), and an ad-free view. Confirmed free-tier baseline: account creation/sync, sheet-view toggle (web only), tuner, metronome, count-in. Confirmed excluded-by-policy: AI YouTube/audio-to-tab transcription. Confirmed default editor shortcuts (E activate editor, T tracks, S speed, L loop, N metronome, C count-in, M mute, Alt+M solo, P print, Space play/pause, arrow keys navigate/shift pitch, 0–9 fret entry) — Airwaves keeps its own shortcut set (`⌘K` command palette, `Ctrl+Z`/`Shift+Z` undo/redo, arrows for cursor + pitch nudge) rather than remapping to Songsterr's single-letter scheme, since the two already collide (e.g. Shift+Arrow is beat-range selection here vs. loop-boundary resize there).
 
+## 2026-08-22 in-house rendering/sound movement
+
+Replaced alphaTab as the playback and rendering path with fully in-house code: `studio-synth.mjs` is a Web Audio synth (oscillators for pitched instruments, filtered noise for drums/metronome) built directly against the arrangement model — no external notation/audio engine, no soundfont download. The tab grid (`#semantic-score`) is now the *only* score surface; there is no separate "engraved preview" panel, matching Songsterr's own single-unified-view architecture confirmed by opening a live Songsterr tab page. Playback drives a cursor highlight directly on the tab grid instead of a hidden second renderer. Verified via headless-browser instrumentation that real `AudioContext`/oscillator `start()` calls occur, position genuinely advances against the real clock, pause freezes it, and the cursor highlights the correct beat. alphaTab is still loaded, but purely as a Guitar Pro/MusicXML/Capella file-format library for import/export — it no longer renders or plays anything.
+
 ## Gap matrix after the clean rebuild
 
 | Product area | Baseline before rebuild | Target for this rebuild | Status |
@@ -20,8 +24,8 @@ Confirmed current Songsterr Plus-gated features (all to be implemented here as f
 | Effects | Small quick-effect list | Explicit commands for every Section 15 effect group | partial |
 | Structure | Per-track bar insert/delete | Aligned cross-track bars, repeats/endings, tempo/signature, pickup and feel | partial |
 | Tracks | Add, rename, delete | Duplicate/reorder, instrument metadata, tuning/capo, mixer and visibility | partial |
-| Renderer | Semantic edit grid + alphaTab preview | Shared model for Tab/Sheet, selection/cursor/loop overlays, multi-track view | partial |
-| Playback/practice | Synth playback, speed, metronome, per-track mute/solo/volume mixer, bar-range loop, playback pitch shift | Selection playback, count-in policy, transpose/pitch state, track autoswitch | partial |
+| Renderer | In-house semantic edit grid, no external notation engine; integrated playback cursor | Beaming/engraving fidelity, Sheet (standard notation) rendering, multi-track view | partial |
+| Playback/practice | In-house Web Audio synth (own oscillators/noise, no soundfont), speed, metronome, count-in, per-track mute/solo/volume mixer, bar-range loop, playback pitch shift | Track autoswitch, richer instrument timbres | partial |
 | Persistence | Local IndexedDB autosave | Versioned drafts, recovery, selection/preferences, conflict guard | partial |
 | Import/export | alphaTab import and GP/AlphaTex/JSON/print | Previewed import, warnings, clean round-trip paths and progress states | partial |
 | Revisions | Rebuilt from scratch | Named local snapshots and restore | partial |
@@ -67,7 +71,7 @@ Confirmed current Songsterr Plus-gated features (all to be implemented here as f
 ## Player and practice
 
 - Tab/Sheet shared position — `partial`
-- Synth transport — `partial` (play/pause no longer crashes or reloads the score on every click, and no longer traps clicks on the tab grid behind the preview panel; the panel is now visually separate from audio playback, matching Songsterr's single-view player. Actual audible sound could not be confirmed in this dev environment — headless-browser testing here has no working audio backend — needs a real-browser check)
+- Synth transport — `verified` (replaced alphaTab/AlphaSynth entirely with an in-house Web Audio synth; play/pause/stop/seek no longer touch any external engine or network resource. Confirmed via instrumented headless-browser test that real `AudioContext` and oscillator `start()` calls occur, that position genuinely advances against the real clock, and that pause freezes it — this is a stronger verification than was possible with alphaTab, where headless testing had no working audio backend at all)
 - Original-audio sync anchors — `not started`
 - Speed 15–175% and BPM fine adjustment — `partial`
 - Loop range and keyboard boundary movement — `not started`

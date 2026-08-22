@@ -49,6 +49,8 @@ export function createNote(family = "guitar", index = 0) {
   return { ...note, midiPitch: [60, 62, 64, 67][index % 4] };
 }
 
+export function measureTicks(measure) { return Math.round((measure.timeSignature.numerator * 4 / measure.timeSignature.denominator) * PPQ); }
+
 export function durationTicks(beat) {
   const denominator = DURATIONS.includes(Number(beat.duration)) ? Number(beat.duration) : 4;
   const base = (PPQ * 4) / denominator;
@@ -312,6 +314,12 @@ export function midiName(value) {
   const midi = Math.max(0, Math.min(127, Number(value) || 60));
   const names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
   return `${names[midi % 12]}${Math.floor(midi / 12) - 1}`;
+}
+
+const NOTE_INDEX = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };
+export function noteNameToMidi(name) {
+  const match = /^([A-G]#?)(-?\d+)$/.exec(String(name).trim());
+  return match ? (Number(match[2]) + 1) * 12 + NOTE_INDEX[match[1]] : 60;
 }
 
 const NOTE_EFFECT_TEX = {

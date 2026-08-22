@@ -31,7 +31,7 @@ The password is processed with PBKDF2-SHA-256 in the browser. Only its derived v
 
 ## Airwaves Studio
 
-Studio uses the open-source [alphaTab](https://www.alphatab.net/) notation engine, pinned to version `1.8.4` from jsDelivr. An internet connection is needed to load the engine, music font, and playback SoundFont.
+Studio's tab rendering and audio playback are in-house: the editable score grid and the synth (`studio-synth.mjs`, built on the standard Web Audio API — oscillators and filtered noise, no samples) are Airwaves' own code, not a third-party notation engine. The single tab view doubles as the playback surface, with the playing beat highlighted directly in place — there is no separate preview panel. [alphaTab](https://www.alphatab.net/) (pinned to `1.8.4` from jsDelivr) is still loaded, but only as a file-format library for Guitar Pro import/export conversion; it never renders or plays anything. An internet connection is only needed for that GP conversion path (and for MusicXML/Capella import, which alphaTab's importer also handles) — everything else works offline once the page has loaded.
 
 The Studio is editor-first and has no accounts, subscriptions, upgrade prompts, marketplace, or locked editing tools. Its native Airwaves project model stores tracks, measures, four voices per measure, beats, notes, rests, tuplets, effects, and timing at 960 PPQ. Changes run through an undoable command history and autosave locally after editing.
 
@@ -43,7 +43,7 @@ Core workflows:
 - see exact underfull/overfull bar validation and fit the active voice to its bar with rests
 - use structural copy/paste, keyboard note entry, and undo/redo command history
 - import Guitar Pro (`.gp`, `.gp3`, `.gp4`, `.gp5`, `.gpx`), MusicXML, Capella, AlphaTex, and Airwaves JSON backups into the editable model
-- play, pause, stop, loop, adjust playback speed and volume, and zoom the score
+- play, pause, stop, loop a bar range, adjust playback speed/volume/pitch, metronome and count-in, via the in-house synth
 - save and autosave versioned projects in local browser storage, with named local snapshots
 - export AlphaTex, Guitar Pro 7, or a complete Airwaves JSON project backup
 - open a print-optimized score and choose **Save as PDF** in the system print window

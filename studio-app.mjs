@@ -1,9 +1,10 @@
 import {
   clone, CommandHistory, createArrangement, createBeat, createMeasure, createNote, createTrack,
-  deleteAlignedMeasure, duplicateAlignedMeasure, fitVoiceToMeasure, getBeat, getMeasure, getNotes,
-  getTrack, getVoice, insertAlignedMeasure, midiName, normalizeArrangement, normalizeSelection,
+  deleteAlignedMeasure, duplicateAlignedMeasure, durationTicks, fitVoiceToMeasure, getBeat, getMeasure, getNotes,
+  getTrack, getVoice, insertAlignedMeasure, measureTicks, midiName, normalizeArrangement, normalizeSelection,
   PPQ, reflowMeasure, reflowVoice, toAlphaTex, validateArrangement, validateMeasure,
 } from "./studio-core.mjs";
+import { TabSynth } from "./studio-synth.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -12,12 +13,10 @@ const PREFS = "airwaves-studio-prefs-v4";
 const EFFECTS = ["ghost", "accent", "heavyAccent", "staccato", "letRing", "palmMute", "dead", "naturalHarmonic", "artificialHarmonic", "hammerPull", "legatoSlide", "shiftSlide", "slideInBelow", "slideInAbove", "slideOutDown", "slideOutUp", "bend", "trill", "tapping", "slapping", "popping", "pickScrapeDown", "pickScrapeUp", "vibrato", "wideVibrato", "tremoloVibrato", "wideTremoloVibrato", "golpeFinger", "golpeThumb", "wahOpen", "wahClosed"];
 const BEAT_EFFECTS = ["hairpin", "brush", "arpeggio", "pickStroke", "grace", "tremoloPicking", "sustainPedal"];
 const QUICK_EFFECTS = ["hammerPull", "legatoSlide", "bend", "vibrato", "palmMute", "letRing"];
-const NOTE_INDEX = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };
 const state = {
   arrangement: createArrangement(), selection: null, history: new CommandHistory(), clipboard: null,
-  display: "tab", inspector: "selection", drafts: [], snapshots: [], alpha: null, preview: false,
-  renderTimer: 0, fretBuffer: "", fretTimer: 0, pitchShift: 0, loop: { startMeasure: null, endMeasure: null }, playbackMeasure: -1, popoverOpen: false,
-  audioActive: false, pendingPlay: false, isPlaying: false,
+  display: "tab", inspector: "selection", drafts: [], snapshots: [], synth: null,
+  renderTimer: 0, synthTimer: 0, fretBuffer: "", fretTimer: 0, pitchShift: 0, loop: { startMeasure: null, endMeasure: null }, playbackMeasure: -1, popoverOpen: false,
 };
 
 function esc(value) { return String(value ?? "").replace(/[&<>'"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c])); }
@@ -46,7 +45,7 @@ function run(type, label, mutate, payload = null) {
   const result = state.history.run({ type, label, payload, arrangement: state.arrangement, selection: state.selection, mutate });
   if (!result.command) return;
   state.arrangement = result.arrangement; state.selection = result.selection;
-  touchStatus(label.toUpperCase()); render(); schedulePreview();
+  touchStatus(label.toUpperCase()); render(); syncSynth();
   queueAutosave();
 }
 
@@ -269,8 +268,8 @@ function saveProject(silent = false) {
   state.history.setBaseline(state.arrangement); renderLibrary(); renderButtons(); touchStatus("SAVED TO THIS BROWSER"); if (!silent) toast("TAB SAVED LOCALLY");
 }
 
-function loadProject(id) { const draft = state.drafts.find((item) => item.arrangement.id === id); if (!draft) return; state.arrangement = normalizeArrangement(draft.arrangement); state.selection = normalizeSelection(state.arrangement); state.history.clear(state.arrangement); state.loop = { startMeasure: null, endMeasure: null }; render(); schedulePreview(); toast("LOCAL TAB OPENED"); }
-function newProject(form) { const data = new FormData(form); state.arrangement = createArrangement({ title: data.get("title"), artist: data.get("artist"), name: data.get("trackName"), family: data.get("family"), measureCount: Number(data.get("measureCount")), numerator: Number(data.get("numerator")), denominator: Number(data.get("denominator")), tempo: Number(data.get("tempo")) }); state.selection = normalizeSelection(state.arrangement); state.history.clear(); state.loop = { startMeasure: null, endMeasure: null }; render(); schedulePreview(); toast("NEW TAB READY"); }
+function loadProject(id) { const draft = state.drafts.find((item) => item.arrangement.id === id); if (!draft) return; state.arrangement = normalizeArrangement(draft.arrangement); state.selection = normalizeSelection(state.arrangement); state.history.clear(state.arrangement); state.loop = { startMeasure: null, endMeasure: null }; render(); syncSynth(); toast("LOCAL TAB OPENED"); }
+function newProject(form) { const data = new FormData(form); state.arrangement = createArrangement({ title: data.get("title"), artist: data.get("artist"), name: data.get("trackName"), family: data.get("family"), measureCount: Number(data.get("measureCount")), numerator: Number(data.get("numerator")), denominator: Number(data.get("denominator")), tempo: Number(data.get("tempo")) }); state.selection = normalizeSelection(state.arrangement); state.history.clear(); state.loop = { startMeasure: null, endMeasure: null }; render(); syncSynth(); toast("NEW TAB READY"); }
 
 function addTrack(form) { const data = new FormData(form); run("add-track", "Add track", (arr, sel) => { const measureCount = arr.tracks[0].measures.length; const source = arr.tracks[0].measures[0]; const track = createTrack({ name: data.get("trackName"), family: data.get("family"), measureCount, numerator: source.timeSignature.numerator, denominator: source.timeSignature.denominator }); arr.tracks.push(track); sel.trackId = track.id; sel.measureIndex = 0; sel.beatIndex = 0; }); }
 function toggleTrackMix(trackId, prop) { run(`track-${prop}`, `Toggle ${prop}`, (arr) => { const track = arr.tracks.find((item) => item.id === trackId); if (track) track[prop] = !track[prop]; }); }
@@ -279,10 +278,10 @@ function trackCommand(name) { run(`track-${name}`, `${name} track`, (arr, sel) =
 function download(name, body, type = "text/plain") { const url = URL.createObjectURL(new Blob([body], { type })); const link = Object.assign(document.createElement("a"), { href: url, download: name }); link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
 function safeName() { return state.arrangement.metadata.title.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase() || "airwaves-tab"; }
 function exportGp() {
-  if (!window.alphaTab?.exporter?.Gp7Exporter || !window.alphaTab?.importer?.ScoreLoader) return toast("GP7 EXPORT NEEDS THE NOTATION ENGINE — CHECK YOUR CONNECTION", true);
+  if (!window.alphaTab?.exporter?.Gp7Exporter || !window.alphaTab?.importer?.ScoreLoader) return toast("GP7 EXPORT NEEDS THE FILE-FORMAT LIBRARY — CHECK YOUR CONNECTION", true);
   try {
-    const settings = state.alpha?.settings || new window.alphaTab.Settings();
-    const score = state.alpha?.score || window.alphaTab.importer.ScoreLoader.loadAlphaTex(toAlphaTex(state.arrangement), settings);
+    const settings = new window.alphaTab.Settings();
+    const score = window.alphaTab.importer.ScoreLoader.loadAlphaTex(toAlphaTex(state.arrangement), settings);
     const bytes = new window.alphaTab.exporter.Gp7Exporter().export(score, settings);
     download(`${safeName()}.gp`, bytes, "application/octet-stream");
   } catch { toast("THIS SCORE COULD NOT BE EXPORTED AS GP7. JSON AND ALPHATEX ARE AVAILABLE.", true); }
@@ -317,102 +316,77 @@ async function importFile(file) {
       const score = window.alphaTab.importer.ScoreLoader.loadScoreFromBytes(new Uint8Array(await file.arrayBuffer()), new window.alphaTab.Settings());
       state.arrangement = scoreToArrangement(score, file.name);
     }
-    state.selection = normalizeSelection(state.arrangement); state.history.clear(); render(); schedulePreview(); toast("TAB IMPORTED — REVIEW TUNING AND EFFECTS BEFORE SAVING");
+    state.selection = normalizeSelection(state.arrangement); state.history.clear(); render(); syncSynth(); toast("TAB IMPORTED — REVIEW TUNING AND EFFECTS BEFORE SAVING");
   } catch (error) { toast(error.message || "THIS FILE COULD NOT BE IMPORTED", true); }
   finally { $("#tab-upload").value = ""; }
 }
 
-function ensureAlpha() {
-  if (state.alpha || !window.alphaTab?.AlphaTabApi) return state.alpha;
-  try {
-    state.alpha = new window.alphaTab.AlphaTabApi($("#alpha-tab"), { core: { tex: true }, display: { scale: Number($("#score-zoom").value) / 100 }, player: { enablePlayer: true, soundFont: "https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.8.4/dist/soundfont/sonivox.sf2" } });
-    state.alpha.playerPositionChanged?.on((event) => {
-      $("#player-position").textContent = formatTime(event.currentTime); $("#player-duration").textContent = formatTime(event.endTime);
-      if (!Number.isFinite(event.currentTick)) return;
-      const track = activeTrack(); if (!track) return;
-      const index = tickToMeasureIndex(track, event.currentTick);
-      if (index === state.playbackMeasure) return;
-      state.playbackMeasure = index;
-      $(`.s3-beat[data-measure="${index}"][data-beat="0"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
-    });
-    state.alpha.playerStateChanged?.on((event) => { state.isPlaying = event.state === 1; $("#play-toggle").textContent = state.isPlaying ? "Ⅱ" : "▶"; });
-    state.alpha.scoreLoaded?.on(() => {
-      applyMixToAlpha(); applyLoopRangeToAlpha(); state.playbackMeasure = -1;
-      if (state.pendingPlay) { state.pendingPlay = false; attemptPlay(); }
-    });
-  } catch (error) { toast(`PREVIEW UNAVAILABLE: ${error.message}`, true); }
-  return state.alpha;
-}
-function applyMixToAlpha() {
-  const tracks = state.alpha?.score?.tracks; if (!state.alpha || !tracks) return;
-  state.arrangement.tracks.forEach((track, index) => {
-    const alphaTrack = tracks[index]; if (!alphaTrack) return;
-    try {
-      state.alpha.changeTrackVolume([alphaTrack], Number.isFinite(track.volume) ? track.volume : 0.85);
-      state.alpha.changeTrackMute([alphaTrack], Boolean(track.muted));
-      state.alpha.changeTrackSolo([alphaTrack], Boolean(track.solo));
-    } catch { /* preview engine does not support live mixer updates */ }
+function measureTimeStartsFor(arrangement) {
+  const reference = arrangement.tracks[0]?.measures || [];
+  let bpm = arrangement.tempo || 120;
+  const starts = []; let t = 0;
+  reference.forEach((measure) => {
+    if (measure.tempoEvents?.[0]?.bpm) bpm = measure.tempoEvents[0].bpm;
+    starts.push({ time: t, bpm });
+    t += measureTicks(measure) * (60 / bpm / PPQ);
   });
-}
-
-function measureTicks(measure) { return Math.round((measure.timeSignature.numerator * 4 / measure.timeSignature.denominator) * PPQ); }
-function measureStartTick(track, measureIndex) { let tick = 0; for (let i = 0; i < measureIndex; i++) tick += measureTicks(track.measures[i]); return tick; }
-function tickToMeasureIndex(track, tick) {
-  let cursor = 0;
-  for (let i = 0; i < track.measures.length; i++) {
-    const length = measureTicks(track.measures[i]);
-    if (tick < cursor + length) return i;
-    cursor += length;
-  }
-  return Math.max(0, track.measures.length - 1);
+  return { starts, total: t };
 }
 function loopBounds() {
   const { startMeasure, endMeasure } = state.loop; if (startMeasure == null || endMeasure == null) return null;
   return { start: Math.min(startMeasure, endMeasure), end: Math.max(startMeasure, endMeasure) };
 }
-function applyLoopRangeToAlpha() {
-  if (!state.alpha) return;
-  const track = activeTrack(); const bounds = track && loopBounds();
-  const clamped = bounds && track.measures.length ? { start: Math.min(bounds.start, track.measures.length - 1), end: Math.min(bounds.end, track.measures.length - 1) } : null;
-  try { state.alpha.playbackRange = clamped ? { startTick: measureStartTick(track, clamped.start), endTick: measureStartTick(track, clamped.end) + measureTicks(track.measures[clamped.end]) } : null; }
-  catch { /* preview engine does not support loop ranges */ }
-}
 function renderLoopReadout() { const bounds = loopBounds(); $("#loop-readout").textContent = bounds ? `BAR ${bounds.start + 1}–${bounds.end + 1}` : "FULL SONG"; }
+function applyLoopToSynth() {
+  const bounds = loopBounds();
+  if (!bounds) { state.synth.setLoop(null); return; }
+  const { starts, total } = measureTimeStartsFor(state.arrangement);
+  const start = Math.min(bounds.start, starts.length - 1);
+  const end = Math.min(bounds.end, starts.length - 1);
+  const endTime = end + 1 < starts.length ? starts[end + 1].time : total;
+  state.synth.setLoop({ start: starts[start]?.time ?? 0, end: endTime });
+}
 function setLoopBoundary(edge) {
   state.loop[edge] = state.selection.measureIndex;
   if (state.loop.startMeasure == null) state.loop.startMeasure = state.selection.measureIndex;
   if (state.loop.endMeasure == null) state.loop.endMeasure = state.selection.measureIndex;
-  renderLoopReadout(); renderMap(); applyLoopRangeToAlpha();
+  renderLoopReadout(); renderMap(); applyLoopToSynth();
 }
 
-function noteNameToMidi(name) { const match = /^([A-G]#?)(-?\d+)$/.exec(String(name).trim()); return match ? (Number(match[2]) + 1) * 12 + NOTE_INDEX[match[1]] : 60; }
-function transposeArrangement(arrangement, semitones) {
-  if (!semitones) return arrangement;
-  const shifted = clone(arrangement);
-  shifted.tracks.forEach((track) => {
-    if (["guitar", "bass"].includes(track.family)) track.tuning = track.tuning.map((name) => midiName(noteNameToMidi(name) + semitones));
-    else track.measures.forEach((measure) => measure.voices.forEach((voice) => voice.beats.forEach((beat) => beat.notes.forEach((note) => { if (Number.isFinite(note.midiPitch)) note.midiPitch = Math.max(0, Math.min(127, note.midiPitch + semitones)); }))));
-  });
-  return shifted;
+function beatKeyAtSeconds(track, seconds) {
+  const { starts } = measureTimeStartsFor(state.arrangement);
+  let measureIndex = 0;
+  for (let i = 0; i < starts.length; i++) { if (starts[i].time <= seconds) measureIndex = i; else break; }
+  const measure = track.measures[measureIndex]; if (!measure) return null;
+  const secondsPerTick = 60 / starts[measureIndex].bpm / PPQ;
+  const elapsedTicks = (seconds - starts[measureIndex].time) / secondsPerTick;
+  const voice = measure.voices[0]; if (!voice) return null;
+  let cursor = 0, beatIndex = 0;
+  for (let i = 0; i < voice.beats.length; i++) { if (cursor <= elapsedTicks) { beatIndex = i; cursor += durationTicks(voice.beats[i]); } else break; }
+  return { measureIndex, beatIndex };
 }
-function syncPreviewVisibility() {
-  const node = $("#render-preview");
-  const mounted = state.preview || state.audioActive;
-  node.hidden = !mounted;
-  node.classList.toggle("audio-only", mounted && !state.preview);
+function updatePlaybackCursor(seconds) {
+  const track = activeTrack();
+  $$(".s3-beat.playing").forEach((el) => el.classList.remove("playing"));
+  const key = track && beatKeyAtSeconds(track, seconds);
+  if (!key) return;
+  const cell = $(`.s3-beat[data-measure="${key.measureIndex}"][data-beat="${key.beatIndex}"]`);
+  if (!cell) return;
+  cell.classList.add("playing");
+  if (key.measureIndex !== state.playbackMeasure) { state.playbackMeasure = key.measureIndex; cell.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" }); }
 }
-function schedulePreview() { if (!state.preview && !state.audioActive) return; clearTimeout(state.renderTimer); state.renderTimer = setTimeout(() => { const api = ensureAlpha(); if (!api) return; try { api.tex(toAlphaTex(transposeArrangement(state.arrangement, state.pitchShift))); } catch { toast("ENGRAVED PREVIEW COULD NOT RENDER THIS EFFECT COMBINATION", true); } }, 180); }
+
+function syncSynth() { clearTimeout(state.synthTimer); state.synthTimer = setTimeout(() => state.synth.load(state.arrangement), 120); }
 
 function showCommands(filter = "") {
-  const commands = [{ n: "Undo", k: "Ctrl Z", a: () => undo() }, { n: "Redo", k: "Ctrl Shift Z", a: () => redo() }, { n: "Insert beat after", k: "", a: () => command("beat-after") }, { n: "Delete beat", k: "Backspace", a: () => command("delete-beat") }, { n: "Toggle rest", k: "R", a: () => command("rest") }, { n: "Add chord note", k: "", a: () => command("add-note") }, { n: "Duplicate bar", k: "", a: () => command("duplicate-bar") }, { n: "Fit bar with rests", k: "", a: repair }, { n: "Save locally", k: "Ctrl S", a: saveProject }, { n: "Toggle preview", k: "P", a: togglePreview }, { n: "Set loop start to selected bar", k: "", a: () => setLoopBoundary("startMeasure") }, { n: "Set loop end to selected bar", k: "", a: () => setLoopBoundary("endMeasure") }, { n: "Clear loop range", k: "", a: () => $("#loop-clear").click() }];
+  const commands = [{ n: "Undo", k: "Ctrl Z", a: () => undo() }, { n: "Redo", k: "Ctrl Shift Z", a: () => redo() }, { n: "Insert beat after", k: "", a: () => command("beat-after") }, { n: "Delete beat", k: "Backspace", a: () => command("delete-beat") }, { n: "Toggle rest", k: "R", a: () => command("rest") }, { n: "Add chord note", k: "", a: () => command("add-note") }, { n: "Duplicate bar", k: "", a: () => command("duplicate-bar") }, { n: "Fit bar with rests", k: "", a: repair }, { n: "Save locally", k: "Ctrl S", a: saveProject }, { n: "Play or pause", k: "Space", a: () => $("#play-toggle").click() }, { n: "Set loop start to selected bar", k: "", a: () => setLoopBoundary("startMeasure") }, { n: "Set loop end to selected bar", k: "", a: () => setLoopBoundary("endMeasure") }, { n: "Clear loop range", k: "", a: () => $("#loop-clear").click() }];
   state.commandItems = commands.filter((item) => item.n.toLowerCase().includes(filter.toLowerCase()));
   $("#command-list").innerHTML = state.commandItems.map((item, index) => `<button type="button" data-command-index="${index}"><span>${item.n}</span><kbd>${item.k}</kbd></button>`).join("");
 }
 function queueAutosave() { clearTimeout(state.autosaveTimer); state.autosaveTimer = setTimeout(() => saveProject(true), 1400); }
-function undo() { const result = state.history.undo(state.arrangement, state.selection); if (!result.command) return; state.arrangement = result.arrangement; state.selection = result.selection; touchStatus(`UNDO: ${result.command.label}`); render(); schedulePreview(); queueAutosave(); }
-function redo() { const result = state.history.redo(state.arrangement, state.selection); if (!result.command) return; state.arrangement = result.arrangement; state.selection = result.selection; touchStatus(`REDO: ${result.command.label}`); render(); schedulePreview(); queueAutosave(); }
+function undo() { const result = state.history.undo(state.arrangement, state.selection); if (!result.command) return; state.arrangement = result.arrangement; state.selection = result.selection; touchStatus(`UNDO: ${result.command.label}`); render(); syncSynth(); queueAutosave(); }
+function redo() { const result = state.history.redo(state.arrangement, state.selection); if (!result.command) return; state.arrangement = result.arrangement; state.selection = result.selection; touchStatus(`REDO: ${result.command.label}`); render(); syncSynth(); queueAutosave(); }
 function repair() { run("fit-measure", "Fit bar with rests", (arr, sel) => fitVoiceToMeasure(getMeasure(arr, sel), getVoice(arr, sel), getTrack(arr, sel.trackId).family)); }
-function togglePreview() { state.preview = !state.preview; syncPreviewVisibility(); $("#toggle-preview").classList.toggle("active", state.preview); if (state.preview) schedulePreview(); }
 
 function moveSelection(deltaBar, deltaBeat, shift = false) {
   const track = activeTrack(); let measureIndex = state.selection.measureIndex + deltaBar, beatIndex = state.selection.beatIndex + deltaBeat;
@@ -443,7 +417,7 @@ document.addEventListener("click", (event) => {
   else if (target.dataset.effect) toggleEffect(target.dataset.effect);
   else if (target.dataset.cycleEffect) cycleBeatEffect(target.dataset.cycleEffect);
   else if (target.dataset.trackCommand) trackCommand(target.dataset.trackCommand);
-  else if (target.dataset.display) { state.display = target.dataset.display; renderScore(); renderButtons(); schedulePreview(); }
+  else if (target.dataset.display) { state.display = target.dataset.display; renderScore(); renderButtons(); syncSynth(); }
   else if (target.dataset.voice) setSelection({ voice: Number(target.dataset.voice), beatIndex: 0 });
   else if (target.dataset.inspector) { state.inspector = target.dataset.inspector; renderInspector(); renderButtons(); }
   else if (target.dataset.commandIndex != null) { state.commandItems[Number(target.dataset.commandIndex)]?.a(); $("#command-dialog").close(); }
@@ -459,29 +433,22 @@ $("#export-menu-toggle").addEventListener("click", () => $(".s3-export").classLi
 $("#snapshot-project").addEventListener("click", () => { renderSnapshots(); $("#snapshot-dialog").showModal(); });
 $("#snapshot-form").addEventListener("submit", (event) => { if (event.submitter?.value !== "save") return; const label = new FormData(event.currentTarget).get("label"); state.snapshots.unshift({ id: `${Date.now()}`, projectId: state.arrangement.id, label, savedAt: new Date().toISOString(), arrangement: clone(state.arrangement) }); writeStore(); toast("SNAPSHOT SAVED"); });
 function renderSnapshots() { const items = state.snapshots.filter((item) => item.projectId === state.arrangement.id); $("#snapshot-list").innerHTML = items.length ? items.map((item) => `<button type="button" data-snapshot="${item.id}"><strong>${esc(item.label)}</strong><span>${formatDate(item.savedAt)}</span></button>`).join("") : "<p>NO SNAPSHOTS FOR THIS TAB.</p>"; }
-$("#snapshot-list").addEventListener("click", (event) => { const button = event.target.closest("[data-snapshot]"); if (!button) return; const item = state.snapshots.find((snapshot) => snapshot.id === button.dataset.snapshot); if (!item) return; state.arrangement = normalizeArrangement(item.arrangement); state.selection = normalizeSelection(state.arrangement); state.history.clear(); state.loop = { startMeasure: null, endMeasure: null }; $("#snapshot-dialog").close(); render(); schedulePreview(); toast("SNAPSHOT RESTORED — SAVE TO KEEP IT"); });
+$("#snapshot-list").addEventListener("click", (event) => { const button = event.target.closest("[data-snapshot]"); if (!button) return; const item = state.snapshots.find((snapshot) => snapshot.id === button.dataset.snapshot); if (!item) return; state.arrangement = normalizeArrangement(item.arrangement); state.selection = normalizeSelection(state.arrangement); state.history.clear(); state.loop = { startMeasure: null, endMeasure: null }; $("#snapshot-dialog").close(); render(); syncSynth(); toast("SNAPSHOT RESTORED — SAVE TO KEEP IT"); });
 $("#command-search").addEventListener("click", () => { showCommands(); $("#command-dialog").showModal(); $("#command-filter").focus(); }); $("#command-filter").addEventListener("input", (event) => showCommands(event.target.value));
-$("#undo-editor").addEventListener("click", undo); $("#redo-editor").addEventListener("click", redo); $("#repair-measure").addEventListener("click", repair); $("#toggle-preview").addEventListener("click", togglePreview);
-$("#export-atex").addEventListener("click", () => download(`${safeName()}.atex`, toAlphaTex(state.arrangement))); $("#export-json").addEventListener("click", () => download(`${safeName()}.airwaves.json`, JSON.stringify(state.arrangement, null, 2), "application/json")); $("#export-gp").addEventListener("click", exportGp); $("#export-pdf").addEventListener("click", () => state.alpha?.print ? state.alpha.print() : window.print());
+$("#undo-editor").addEventListener("click", undo); $("#redo-editor").addEventListener("click", redo); $("#repair-measure").addEventListener("click", repair);
+$("#export-atex").addEventListener("click", () => download(`${safeName()}.atex`, toAlphaTex(state.arrangement))); $("#export-json").addEventListener("click", () => download(`${safeName()}.airwaves.json`, JSON.stringify(state.arrangement, null, 2), "application/json")); $("#export-gp").addEventListener("click", exportGp); $("#export-pdf").addEventListener("click", () => window.print());
 $(".s3-export").addEventListener("click", (event) => { if (event.target.closest("button")) $(".s3-export").classList.remove("open"); });
-$("#score-zoom").addEventListener("input", (event) => { $("#zoom-output").value = `${event.target.value}%`; if (state.alpha) { state.alpha.settings.display.scale = Number(event.target.value) / 100; state.alpha.updateSettings(); state.alpha.render(); } });
-$("#playback-speed").addEventListener("input", (event) => { $("#speed-output").value = `${event.target.value}%`; if (ensureAlpha()) state.alpha.playbackSpeed = Number(event.target.value) / 100; }); $("#master-volume").addEventListener("input", (event) => { $("#volume-output").value = `${event.target.value}%`; if (ensureAlpha()) state.alpha.masterVolume = Number(event.target.value) / 100; });
-function attemptPlay() {
-  const api = state.alpha; if (!api) return;
-  const wantsToPlay = !state.isPlaying;
-  api.playPause();
-  setTimeout(() => { if (wantsToPlay && !state.isPlaying) api.playPause(); }, 700);
-}
-$("#play-toggle").addEventListener("click", () => {
-  state.audioActive = true; syncPreviewVisibility();
-  const api = ensureAlpha(); if (!api) return;
-  if (api.score) attemptPlay();
-  else { state.pendingPlay = true; schedulePreview(); }
-}); $("#stop-player").addEventListener("click", () => state.alpha?.stop()); $("#go-start").addEventListener("click", () => { if (state.alpha) state.alpha.tickPosition = 0; });
-[["#loop-toggle", "isLooping"], ["#metronome-toggle", "metronomeVolume"], ["#count-in-toggle", "countInVolume"]].forEach(([selector, property]) => $(selector).addEventListener("click", (event) => { const api = ensureAlpha(); const on = event.currentTarget.getAttribute("aria-pressed") !== "true"; event.currentTarget.setAttribute("aria-pressed", String(on)); if (api) api[property] = property === "isLooping" ? on : on ? 1 : 0; }));
+$("#playback-speed").addEventListener("input", (event) => { $("#speed-output").value = `${event.target.value}%`; state.synth.setSpeed(Number(event.target.value) / 100); });
+$("#master-volume").addEventListener("input", (event) => { $("#volume-output").value = `${event.target.value}%`; state.synth.setMasterVolume(Number(event.target.value) / 100); });
+$("#play-toggle").addEventListener("click", () => { if (state.synth.playing) state.synth.pause(); else state.synth.play(); });
+$("#stop-player").addEventListener("click", () => state.synth.stop());
+$("#go-start").addEventListener("click", () => state.synth.seek(0));
+$("#loop-toggle").addEventListener("click", (event) => { const on = event.currentTarget.getAttribute("aria-pressed") !== "true"; event.currentTarget.setAttribute("aria-pressed", String(on)); state.synth.setLooping(on); });
+$("#metronome-toggle").addEventListener("click", (event) => { const on = event.currentTarget.getAttribute("aria-pressed") !== "true"; event.currentTarget.setAttribute("aria-pressed", String(on)); state.synth.setMetronome(on); });
+$("#count-in-toggle").addEventListener("click", (event) => { const on = event.currentTarget.getAttribute("aria-pressed") !== "true"; event.currentTarget.setAttribute("aria-pressed", String(on)); state.synth.setCountIn(on); });
 $("#loop-set-start").addEventListener("click", () => setLoopBoundary("startMeasure")); $("#loop-set-end").addEventListener("click", () => setLoopBoundary("endMeasure"));
-$("#loop-clear").addEventListener("click", () => { state.loop = { startMeasure: null, endMeasure: null }; renderLoopReadout(); renderMap(); applyLoopRangeToAlpha(); });
-$("#pitch-shift").addEventListener("input", (event) => { const value = Number(event.target.value); state.pitchShift = value; $("#pitch-output").textContent = `${value > 0 ? "+" : ""}${value} ST`; schedulePreview(); });
+$("#loop-clear").addEventListener("click", () => { state.loop = { startMeasure: null, endMeasure: null }; renderLoopReadout(); renderMap(); applyLoopToSynth(); });
+$("#pitch-shift").addEventListener("input", (event) => { const value = Number(event.target.value); state.pitchShift = value; $("#pitch-output").textContent = `${value > 0 ? "+" : ""}${value} ST`; state.synth.setPitchShift(value); });
 $("#note-popover").addEventListener("click", (event) => { if (event.target.closest("[data-popover-close]")) { state.popoverOpen = false; renderNotePopover(); } });
 document.addEventListener("click", (event) => {
   if (!state.popoverOpen) return;
@@ -504,7 +471,6 @@ document.addEventListener("keydown", (event) => {
   else if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); const delta = event.key === "ArrowUp" ? 1 : -1; run("move-note", "Move note", (arr, sel) => getNotes(arr, sel).forEach((note) => { if (note.fret != null) note.fret = Math.max(0, Math.min(getTrack(arr, sel.trackId).maxFret, note.fret + delta)); else note.midiPitch = Math.max(0, Math.min(127, note.midiPitch + delta)); })); }
   else if (event.key === "Backspace" || event.key === "Delete") { event.preventDefault(); command("delete-note"); }
   else if (event.key.toLowerCase() === "r") command("rest");
-  else if (event.key.toLowerCase() === "p") togglePreview();
   else if (event.key === " ") { event.preventDefault(); $("#play-toggle").click(); }
 });
 window.addEventListener("beforeunload", (event) => { if (state.history.isDirty(state.arrangement)) { event.preventDefault(); event.returnValue = ""; } });
@@ -512,4 +478,10 @@ window.addEventListener("beforeunload", (event) => { if (state.history.isDirty(s
 const stored = readStore(); state.drafts = stored.drafts || []; state.snapshots = stored.snapshots || [];
 const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch { return {}; } })(); state.display = prefs.display || "tab";
 state.selection = normalizeSelection(state.arrangement); state.history.setBaseline(state.arrangement); render();
+state.synth = new TabSynth();
+state.synth.onPosition = (pos, dur) => { $("#player-position").textContent = formatTime(pos * 1000); $("#player-duration").textContent = formatTime(dur * 1000); updatePlaybackCursor(pos); };
+state.synth.onStateChange = (playing) => { $("#play-toggle").textContent = playing ? "Ⅱ" : "▶"; if (!playing) { $$(".s3-beat.playing").forEach((el) => el.classList.remove("playing")); state.playbackMeasure = -1; } };
+state.synth.setMasterVolume(Number($("#master-volume").value) / 100);
+state.synth.setSpeed(Number($("#playback-speed").value) / 100);
+state.synth.load(state.arrangement);
 $$("[data-duration]").forEach((button) => { const duration = Number(button.dataset.duration); button.innerHTML = noteGlyph(duration); button.title = `1/${duration} note`; button.setAttribute("aria-label", `1/${duration} note`); });
