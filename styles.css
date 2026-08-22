@@ -2371,6 +2371,7 @@ footer > :last-child {
 .studio-r4 .s3-validator { flex: 0 0 42px; min-height: 42px; }
 .studio-r4 .s3-preview { position: absolute; inset: 159px 270px 58px 216px; z-index: 25; overflow: auto; border-top: 0; box-shadow: 0 0 0 1px #999, 0 15px 50px rgba(0,0,0,.32); }
 .studio-r4 .s3-preview[hidden] { display: none; }
+.studio-r4 .s3-preview.audio-only { position: fixed; left: -9999px; top: 0; width: 900px; height: 500px; visibility: hidden; pointer-events: none; box-shadow: none; }
 .studio-r4 .s3-preview > header { position: sticky; top: 0; z-index: 3; background: #171714; }
 .studio-r4 .s3-inspector { background: #151513; }
 .studio-r4 .s3-inspector-tabs { position: sticky; top: 0; z-index: 3; background: #151513; }

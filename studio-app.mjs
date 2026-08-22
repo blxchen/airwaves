@@ -17,6 +17,7 @@ const state = {
   arrangement: createArrangement(), selection: null, history: new CommandHistory(), clipboard: null,
   display: "tab", inspector: "selection", drafts: [], snapshots: [], alpha: null, preview: false,
   renderTimer: 0, fretBuffer: "", fretTimer: 0, pitchShift: 0, loop: { startMeasure: null, endMeasure: null }, playbackMeasure: -1, popoverOpen: false,
+  audioActive: false, pendingPlay: false, isPlaying: false,
 };
 
 function esc(value) { return String(value ?? "").replace(/[&<>'"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c])); }
@@ -334,8 +335,11 @@ function ensureAlpha() {
       state.playbackMeasure = index;
       $(`.s3-beat[data-measure="${index}"][data-beat="0"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
     });
-    state.alpha.playerStateChanged?.on((event) => { $("#play-toggle").textContent = event.state === 1 ? "Ⅱ" : "▶"; });
-    state.alpha.scoreLoaded?.on(() => { applyMixToAlpha(); applyLoopRangeToAlpha(); state.playbackMeasure = -1; });
+    state.alpha.playerStateChanged?.on((event) => { state.isPlaying = event.state === 1; $("#play-toggle").textContent = state.isPlaying ? "Ⅱ" : "▶"; });
+    state.alpha.scoreLoaded?.on(() => {
+      applyMixToAlpha(); applyLoopRangeToAlpha(); state.playbackMeasure = -1;
+      if (state.pendingPlay) { state.pendingPlay = false; attemptPlay(); }
+    });
   } catch (error) { toast(`PREVIEW UNAVAILABLE: ${error.message}`, true); }
   return state.alpha;
 }
@@ -391,7 +395,13 @@ function transposeArrangement(arrangement, semitones) {
   });
   return shifted;
 }
-function schedulePreview() { if (!state.preview) return; clearTimeout(state.renderTimer); state.renderTimer = setTimeout(() => { const api = ensureAlpha(); if (!api) return; try { api.tex(toAlphaTex(transposeArrangement(state.arrangement, state.pitchShift))); } catch { toast("ENGRAVED PREVIEW COULD NOT RENDER THIS EFFECT COMBINATION", true); } }, 180); }
+function syncPreviewVisibility() {
+  const node = $("#render-preview");
+  const mounted = state.preview || state.audioActive;
+  node.hidden = !mounted;
+  node.classList.toggle("audio-only", mounted && !state.preview);
+}
+function schedulePreview() { if (!state.preview && !state.audioActive) return; clearTimeout(state.renderTimer); state.renderTimer = setTimeout(() => { const api = ensureAlpha(); if (!api) return; try { api.tex(toAlphaTex(transposeArrangement(state.arrangement, state.pitchShift))); } catch { toast("ENGRAVED PREVIEW COULD NOT RENDER THIS EFFECT COMBINATION", true); } }, 180); }
 
 function showCommands(filter = "") {
   const commands = [{ n: "Undo", k: "Ctrl Z", a: () => undo() }, { n: "Redo", k: "Ctrl Shift Z", a: () => redo() }, { n: "Insert beat after", k: "", a: () => command("beat-after") }, { n: "Delete beat", k: "Backspace", a: () => command("delete-beat") }, { n: "Toggle rest", k: "R", a: () => command("rest") }, { n: "Add chord note", k: "", a: () => command("add-note") }, { n: "Duplicate bar", k: "", a: () => command("duplicate-bar") }, { n: "Fit bar with rests", k: "", a: repair }, { n: "Save locally", k: "Ctrl S", a: saveProject }, { n: "Toggle preview", k: "P", a: togglePreview }, { n: "Set loop start to selected bar", k: "", a: () => setLoopBoundary("startMeasure") }, { n: "Set loop end to selected bar", k: "", a: () => setLoopBoundary("endMeasure") }, { n: "Clear loop range", k: "", a: () => $("#loop-clear").click() }];
@@ -402,7 +412,7 @@ function queueAutosave() { clearTimeout(state.autosaveTimer); state.autosaveTime
 function undo() { const result = state.history.undo(state.arrangement, state.selection); if (!result.command) return; state.arrangement = result.arrangement; state.selection = result.selection; touchStatus(`UNDO: ${result.command.label}`); render(); schedulePreview(); queueAutosave(); }
 function redo() { const result = state.history.redo(state.arrangement, state.selection); if (!result.command) return; state.arrangement = result.arrangement; state.selection = result.selection; touchStatus(`REDO: ${result.command.label}`); render(); schedulePreview(); queueAutosave(); }
 function repair() { run("fit-measure", "Fit bar with rests", (arr, sel) => fitVoiceToMeasure(getMeasure(arr, sel), getVoice(arr, sel), getTrack(arr, sel.trackId).family)); }
-function togglePreview() { state.preview = !state.preview; $("#render-preview").hidden = !state.preview; $("#toggle-preview").classList.toggle("active", state.preview); if (state.preview) schedulePreview(); }
+function togglePreview() { state.preview = !state.preview; syncPreviewVisibility(); $("#toggle-preview").classList.toggle("active", state.preview); if (state.preview) schedulePreview(); }
 
 function moveSelection(deltaBar, deltaBeat, shift = false) {
   const track = activeTrack(); let measureIndex = state.selection.measureIndex + deltaBar, beatIndex = state.selection.beatIndex + deltaBeat;
@@ -456,7 +466,18 @@ $("#export-atex").addEventListener("click", () => download(`${safeName()}.atex`,
 $(".s3-export").addEventListener("click", (event) => { if (event.target.closest("button")) $(".s3-export").classList.remove("open"); });
 $("#score-zoom").addEventListener("input", (event) => { $("#zoom-output").value = `${event.target.value}%`; if (state.alpha) { state.alpha.settings.display.scale = Number(event.target.value) / 100; state.alpha.updateSettings(); state.alpha.render(); } });
 $("#playback-speed").addEventListener("input", (event) => { $("#speed-output").value = `${event.target.value}%`; if (ensureAlpha()) state.alpha.playbackSpeed = Number(event.target.value) / 100; }); $("#master-volume").addEventListener("input", (event) => { $("#volume-output").value = `${event.target.value}%`; if (ensureAlpha()) state.alpha.masterVolume = Number(event.target.value) / 100; });
-$("#play-toggle").addEventListener("click", () => { state.preview = true; $("#render-preview").hidden = false; schedulePreview(); setTimeout(() => state.alpha?.playPause(), 250); }); $("#stop-player").addEventListener("click", () => state.alpha?.stop()); $("#go-start").addEventListener("click", () => { if (state.alpha) state.alpha.tickPosition = 0; });
+function attemptPlay() {
+  const api = state.alpha; if (!api) return;
+  const wantsToPlay = !state.isPlaying;
+  api.playPause();
+  setTimeout(() => { if (wantsToPlay && !state.isPlaying) api.playPause(); }, 700);
+}
+$("#play-toggle").addEventListener("click", () => {
+  state.audioActive = true; syncPreviewVisibility();
+  const api = ensureAlpha(); if (!api) return;
+  if (api.score) attemptPlay();
+  else { state.pendingPlay = true; schedulePreview(); }
+}); $("#stop-player").addEventListener("click", () => state.alpha?.stop()); $("#go-start").addEventListener("click", () => { if (state.alpha) state.alpha.tickPosition = 0; });
 [["#loop-toggle", "isLooping"], ["#metronome-toggle", "metronomeVolume"], ["#count-in-toggle", "countInVolume"]].forEach(([selector, property]) => $(selector).addEventListener("click", (event) => { const api = ensureAlpha(); const on = event.currentTarget.getAttribute("aria-pressed") !== "true"; event.currentTarget.setAttribute("aria-pressed", String(on)); if (api) api[property] = property === "isLooping" ? on : on ? 1 : 0; }));
 $("#loop-set-start").addEventListener("click", () => setLoopBoundary("startMeasure")); $("#loop-set-end").addEventListener("click", () => setLoopBoundary("endMeasure"));
 $("#loop-clear").addEventListener("click", () => { state.loop = { startMeasure: null, endMeasure: null }; renderLoopReadout(); renderMap(); applyLoopRangeToAlpha(); });

@@ -67,7 +67,7 @@ Confirmed current Songsterr Plus-gated features (all to be implemented here as f
 ## Player and practice
 
 - Tab/Sheet shared position — `partial`
-- Synth transport — `partial`
+- Synth transport — `partial` (play/pause no longer crashes or reloads the score on every click, and no longer traps clicks on the tab grid behind the preview panel; the panel is now visually separate from audio playback, matching Songsterr's single-view player. Actual audible sound could not be confirmed in this dev environment — headless-browser testing here has no working audio backend — needs a real-browser check)
 - Original-audio sync anchors — `not started`
 - Speed 15–175% and BPM fine adjustment — `partial`
 - Loop range and keyboard boundary movement — `not started`
