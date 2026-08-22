@@ -11,11 +11,12 @@ const STORAGE = "airwaves-studio-v4";
 const PREFS = "airwaves-studio-prefs-v4";
 const EFFECTS = ["ghost", "accent", "heavyAccent", "staccato", "letRing", "palmMute", "dead", "naturalHarmonic", "artificialHarmonic", "hammerPull", "legatoSlide", "shiftSlide", "slideInBelow", "slideInAbove", "slideOutDown", "slideOutUp", "bend", "trill", "tapping", "slapping", "popping", "pickScrapeDown", "pickScrapeUp", "vibrato", "wideVibrato", "tremoloVibrato", "wideTremoloVibrato", "golpeFinger", "golpeThumb", "wahOpen", "wahClosed"];
 const BEAT_EFFECTS = ["hairpin", "brush", "arpeggio", "pickStroke", "grace", "tremoloPicking", "sustainPedal"];
+const QUICK_EFFECTS = ["hammerPull", "legatoSlide", "bend", "vibrato", "palmMute", "letRing"];
 const NOTE_INDEX = { C: 0, "C#": 1, D: 2, "D#": 3, E: 4, F: 5, "F#": 6, G: 7, "G#": 8, A: 9, "A#": 10, B: 11 };
 const state = {
   arrangement: createArrangement(), selection: null, history: new CommandHistory(), clipboard: null,
   display: "tab", inspector: "selection", drafts: [], snapshots: [], alpha: null, preview: false,
-  renderTimer: 0, fretBuffer: "", fretTimer: 0, pitchShift: 0, loop: { startMeasure: null, endMeasure: null },
+  renderTimer: 0, fretBuffer: "", fretTimer: 0, pitchShift: 0, loop: { startMeasure: null, endMeasure: null }, playbackMeasure: -1, popoverOpen: false,
 };
 
 function esc(value) { return String(value ?? "").replace(/[&<>'"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c])); }
@@ -62,7 +63,29 @@ function render(full = true) {
   state.selection = normalizeSelection(state.arrangement, state.selection || { trackId: state.arrangement.tracks[0]?.id });
   if (full) { renderFields(); renderLibrary(); renderTracks(); renderMap(); renderScore(); }
   else { renderTracks(); renderMap(); renderScore(); }
-  renderInspector(); renderValidation(); renderButtons(); renderLoopReadout();
+  renderInspector(); renderValidation(); renderButtons(); renderLoopReadout(); renderNotePopover();
+}
+
+function effectAbbr(effect) { return effect.replace(/([A-Z])/g, " $1").trim().split(" ").map((word) => word[0]).join("").toUpperCase(); }
+function renderNotePopover() {
+  const popover = $("#note-popover");
+  if (!state.popoverOpen) { popover.hidden = true; return; }
+  const cell = $(".s3-beat.selected");
+  if (!cell) { state.popoverOpen = false; popover.hidden = true; return; }
+  const track = activeTrack(), note = getNotes(state.arrangement, state.selection)[0];
+  let fieldHtml;
+  if (note && ["guitar", "bass"].includes(track.family)) fieldHtml = field("FRET", "note.fret", note.fret, "number", `min="0" max="${track.maxFret}"`);
+  else if (note && track.family === "drums") fieldHtml = field("HIT", "note.articulation", note.articulation);
+  else if (note) fieldHtml = field("PITCH", "note.midiPitch", note.midiPitch, "number", 'min="0" max="127"');
+  else fieldHtml = `<span class="s3-popover-rest">REST — PRESS 0–9 TO ENTER A NOTE</span>`;
+  const effectButtons = note ? QUICK_EFFECTS.map((effect) => `<button type="button" data-effect="${effect}" class="${note.effects?.[effect] ? "active" : ""}" title="${effect}">${effectAbbr(effect)}</button>`).join("") : "";
+  const tieButton = note ? `<button type="button" data-command="tie" class="${note.tieFromPrevious ? "active" : ""}" title="Tie">TIE</button>` : "";
+  popover.innerHTML = `<button type="button" class="s3-popover-close" data-popover-close aria-label="Close">×</button>${fieldHtml}<div class="s3-popover-effects">${effectButtons}${tieButton}</div>`;
+  popover.hidden = false;
+  const rect = cell.getBoundingClientRect();
+  const left = Math.max(8, Math.min(window.innerWidth - popover.offsetWidth - 8, rect.left));
+  const top = Math.max(8, rect.top - popover.offsetHeight - 10);
+  popover.style.left = `${left}px`; popover.style.top = `${top}px`;
 }
 
 function renderFields() {
@@ -202,6 +225,17 @@ function command(name) {
   if (handlers[name]) run(name, name.replaceAll("-", " "), handlers[name]);
 }
 
+function noteGlyph(duration) {
+  const hollow = duration === 1 || duration === 2;
+  const stemmed = duration !== 1;
+  const flags = duration === 8 ? 1 : duration === 16 ? 2 : duration === 32 ? 3 : duration === 64 ? 4 : 0;
+  const head = hollow
+    ? `<ellipse cx="7" cy="21" rx="5.2" ry="3.6" transform="rotate(-18 7 21)" fill="none" stroke="currentColor" stroke-width="1.6"/>`
+    : `<ellipse cx="7" cy="21" rx="5.2" ry="3.6" transform="rotate(-18 7 21)" fill="currentColor"/>`;
+  const stem = stemmed ? `<line x1="12" y1="21" x2="12" y2="3" stroke="currentColor" stroke-width="1.6"/>` : "";
+  const flagMarks = Array.from({ length: flags }, (_, i) => `<path d="M12 ${3 + i * 5} q7 2 6 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>`).join("");
+  return `<svg viewBox="0 0 22 28" width="16" height="20" aria-hidden="true" focusable="false">${head}${stem}${flagMarks}</svg>`;
+}
 function setDuration(duration) { run("duration", `Set 1/${duration} duration`, (arr, sel) => { const b = editableBeat(arr, sel); b.duration = duration; reflowVoice(getVoice(arr, sel)); }); }
 function toggleEffect(effect) { run("note-effect", `Toggle ${effect}`, (arr, sel) => getNotes(arr, sel).forEach((note) => { note.effects[effect] = !note.effects[effect]; })); }
 const CYCLE = { hairpin: ["none", "crescendo", "diminuendo"], brush: ["none", "up", "down"], arpeggio: ["none", "up", "down"], pickStroke: ["none", "up", "down"], grace: ["none", "before", "on"], tremoloPicking: ["none", "8", "16", "32"], sustainPedal: ["none", "down", "up"] };
@@ -291,9 +325,17 @@ function ensureAlpha() {
   if (state.alpha || !window.alphaTab?.AlphaTabApi) return state.alpha;
   try {
     state.alpha = new window.alphaTab.AlphaTabApi($("#alpha-tab"), { core: { tex: true }, display: { scale: Number($("#score-zoom").value) / 100 }, player: { enablePlayer: true, soundFont: "https://cdn.jsdelivr.net/npm/@coderline/alphatab@1.8.4/dist/soundfont/sonivox.sf2" } });
-    state.alpha.playerPositionChanged?.on((event) => { $("#player-position").textContent = formatTime(event.currentTime); $("#player-duration").textContent = formatTime(event.endTime); });
+    state.alpha.playerPositionChanged?.on((event) => {
+      $("#player-position").textContent = formatTime(event.currentTime); $("#player-duration").textContent = formatTime(event.endTime);
+      if (!Number.isFinite(event.currentTick)) return;
+      const track = activeTrack(); if (!track) return;
+      const index = tickToMeasureIndex(track, event.currentTick);
+      if (index === state.playbackMeasure) return;
+      state.playbackMeasure = index;
+      $(`.s3-beat[data-measure="${index}"][data-beat="0"]`)?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    });
     state.alpha.playerStateChanged?.on((event) => { $("#play-toggle").textContent = event.state === 1 ? "Ⅱ" : "▶"; });
-    state.alpha.scoreLoaded?.on(() => { applyMixToAlpha(); applyLoopRangeToAlpha(); });
+    state.alpha.scoreLoaded?.on(() => { applyMixToAlpha(); applyLoopRangeToAlpha(); state.playbackMeasure = -1; });
   } catch (error) { toast(`PREVIEW UNAVAILABLE: ${error.message}`, true); }
   return state.alpha;
 }
@@ -311,6 +353,15 @@ function applyMixToAlpha() {
 
 function measureTicks(measure) { return Math.round((measure.timeSignature.numerator * 4 / measure.timeSignature.denominator) * PPQ); }
 function measureStartTick(track, measureIndex) { let tick = 0; for (let i = 0; i < measureIndex; i++) tick += measureTicks(track.measures[i]); return tick; }
+function tickToMeasureIndex(track, tick) {
+  let cursor = 0;
+  for (let i = 0; i < track.measures.length; i++) {
+    const length = measureTicks(track.measures[i]);
+    if (tick < cursor + length) return i;
+    cursor += length;
+  }
+  return Math.max(0, track.measures.length - 1);
+}
 function loopBounds() {
   const { startMeasure, endMeasure } = state.loop; if (startMeasure == null || endMeasure == null) return null;
   return { start: Math.min(startMeasure, endMeasure), end: Math.max(startMeasure, endMeasure) };
@@ -370,6 +421,7 @@ document.addEventListener("click", (event) => {
     const noteIndices = (event.ctrlKey || event.metaKey) && sameBeat
       ? [...new Set([...state.selection.noteIndices, noteIndex])]
       : [noteIndex];
+    state.popoverOpen = true;
     setSelection({ measureIndex: Number(target.dataset.measure), beatIndex: Number(target.dataset.beat), noteIndex, noteIndices }, { range: event.shiftKey });
   }
   else if (target.dataset.trackMix) toggleTrackMix(target.dataset.trackId, target.dataset.trackMix);
@@ -409,8 +461,16 @@ $("#play-toggle").addEventListener("click", () => { state.preview = true; $("#re
 $("#loop-set-start").addEventListener("click", () => setLoopBoundary("startMeasure")); $("#loop-set-end").addEventListener("click", () => setLoopBoundary("endMeasure"));
 $("#loop-clear").addEventListener("click", () => { state.loop = { startMeasure: null, endMeasure: null }; renderLoopReadout(); renderMap(); applyLoopRangeToAlpha(); });
 $("#pitch-shift").addEventListener("input", (event) => { const value = Number(event.target.value); state.pitchShift = value; $("#pitch-output").textContent = `${value > 0 ? "+" : ""}${value} ST`; schedulePreview(); });
+$("#note-popover").addEventListener("click", (event) => { if (event.target.closest("[data-popover-close]")) { state.popoverOpen = false; renderNotePopover(); } });
+document.addEventListener("click", (event) => {
+  if (!state.popoverOpen) return;
+  if (event.target.closest("#note-popover") || event.target.closest(".s3-beat")) return;
+  state.popoverOpen = false; renderNotePopover();
+});
+window.addEventListener("scroll", () => { if (state.popoverOpen) renderNotePopover(); }, true);
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.popoverOpen) { state.popoverOpen = false; renderNotePopover(); return; }
   if (event.target.matches("input, textarea, select") || $("dialog[open]")) return;
   const mod = event.ctrlKey || event.metaKey;
   if (mod && event.key.toLowerCase() === "k") { event.preventDefault(); $("#command-search").click(); }
@@ -431,3 +491,4 @@ window.addEventListener("beforeunload", (event) => { if (state.history.isDirty(s
 const stored = readStore(); state.drafts = stored.drafts || []; state.snapshots = stored.snapshots || [];
 const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREFS)) || {}; } catch { return {}; } })(); state.display = prefs.display || "tab";
 state.selection = normalizeSelection(state.arrangement); state.history.setBaseline(state.arrangement); render();
+$$("[data-duration]").forEach((button) => { const duration = Number(button.dataset.duration); button.innerHTML = noteGlyph(duration); button.title = `1/${duration} note`; button.setAttribute("aria-label", `1/${duration} note`); });
